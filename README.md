@@ -15,7 +15,7 @@ fixed commit and calls its code instead of copying it.
 | Phase | What | State |
 |---|---|---|
 | 1 | Serving: FastAPI, input validation, SHAP factors, request log, Docker | done |
-| 2 | Experiment tracking with MLflow | planned |
+| 2 | Experiment tracking with MLflow | done |
 | 3 | Drift detection on a time-ordered replay of the test period | planned |
 | 4 | Champion/challenger retraining | planned |
 | 5 | Streamlit dashboard | planned |
@@ -26,7 +26,8 @@ Requires Python 3.12, [uv](https://docs.astral.sh/uv/), and Docker.
 
 ```bash
 uv sync
-uv run overseer-train          # downloads Elliptic (~150 MB), writes models/v1/
+uv run overseer-train          # downloads Elliptic (~150 MB), writes models/v1/, logs to MLflow
+uv run mlflow ui               # browse runs at http://localhost:5000
 docker build -t overseerml:v1 .
 docker run -p 8000:8000 overseerml:v1
 ```
@@ -80,6 +81,23 @@ training, so filling them in would give scores that look valid but aren't.
 with its request ID, timestamp, model version, score, alert flag, and latency.
 Raw features are not stored. To keep the log after the container stops, mount
 the folder: `docker run -v ./logs:/app/logs …`.
+
+## Phase 2: experiment tracking
+
+Every `overseer-train` run is an MLflow run in the `overseerml` experiment,
+stored locally in `mlflow.db` (run metadata) and `mlruns/` (files). No server
+is needed. Each run records:
+
+- **Parameters**: all XGBoost hyperparameters, resampling (SMOTE), the
+  train and validation boundaries, the cost assumptions, and the CryptoGuard
+  commit.
+- **Metrics**: validation and test PR-AUC, the alert threshold, and the full
+  test confusion matrix at that threshold (TP, FP, FN, TN) with precision,
+  recall and F1.
+- **Artifacts**: `model.json` and `meta.json`, the same files the API serves.
+
+`meta.json` also stores the run ID, so any served model version can be traced
+back to the exact run that produced it.
 
 ## Development
 

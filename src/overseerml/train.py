@@ -1,10 +1,14 @@
-"""Retrain CryptoGuard's headline model and save it as a servable artifact.
+"""Retrain CryptoGuard's headline model, save it as a servable artifact, and track the run.
 
 CryptoGuard never saves its models, so this reruns its own code (data loader,
 temporal split, model definition, threshold rule) and writes:
 
     <out>/model.json  XGBoost's native format: portable across versions, no pickle
     <out>/meta.json   version, features, alert threshold, and the metrics behind it
+
+Each run is logged to MLflow (local SQLite store `mlflow.db`, view with
+`uv run mlflow ui`): hyperparameters, PR-AUC, the test confusion matrix at the
+alert threshold, and both files above.
 """
 
 from __future__ import annotations
@@ -15,9 +19,10 @@ from datetime import UTC, datetime
 from importlib.metadata import distribution
 from pathlib import Path
 
+import mlflow
 from cryptoguard import evaluate as ev
 from cryptoguard.data import FEATURE_COLUMNS, load_elliptic
-from cryptoguard.features import temporal_split
+from cryptoguard.features import TRAIN_END, VAL_END, temporal_split
 from cryptoguard.models import build_xgboost_smote
 from cryptoguard.pipeline import COST_FN, COST_FP
 
@@ -38,6 +43,14 @@ def main() -> None:
     args = parser.parse_args()
     out = args.out or ROOT / "models" / args.version
 
+    mlflow.set_experiment("overseerml")
+    with mlflow.start_run(run_name=args.version) as run:
+        meta = train_and_save(args.version, out, run.info.run_id)
+    print(json.dumps(meta["metrics"], indent=2))
+    print(f"Wrote {out} (MLflow run {run.info.run_id})")
+
+
+def train_and_save(version: str, out: Path, run_id: str) -> dict:
     train, val, test = temporal_split(load_elliptic(DATA_DIR))
     # CryptoGuard compared SMOTE with class weights on validation and adopted
     # SMOTE (results.json "smote.adopted"), so that is the model rebuilt here.
@@ -49,11 +62,14 @@ def main() -> None:
     test_s = booster.predict_proba(test.X)[:, 1]
     threshold = ev.cost_optimal_threshold(val.y, val_s, COST_FN, COST_FP)
     at_threshold = ev.threshold_metrics(test.y, test_s, threshold)
+    # threshold_metrics leaves out true negatives; add them to complete the confusion matrix.
+    at_threshold["tn"] = len(test.y) - at_threshold["tp"] - at_threshold["fp"] - at_threshold["fn"]
 
     out.mkdir(parents=True, exist_ok=True)
     booster.save_model(out / "model.json")
     meta = {
-        "version": args.version,
+        "version": version,
+        "mlflow_run_id": run_id,
         "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "cryptoguard_commit": cryptoguard_commit(),
         "features": FEATURE_COLUMNS,
@@ -65,8 +81,21 @@ def main() -> None:
         },
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n", newline="\n")
-    print(json.dumps(meta["metrics"], indent=2))
-    print(f"Wrote {out}")
+
+    mlflow.log_params(
+        {
+            "cryptoguard_commit": meta["cryptoguard_commit"],
+            "resampling": "SMOTE",
+            "train_end_step": TRAIN_END,
+            "val_end_step": VAL_END,
+            "cost_fn": COST_FN,
+            "cost_fp": COST_FP,
+            **{k: v for k, v in booster.get_params().items() if v is not None},
+        }
+    )
+    mlflow.log_metrics({**meta["metrics"], "threshold": threshold})
+    mlflow.log_artifacts(str(out), artifact_path="model")
+    return meta
 
 
 if __name__ == "__main__":
