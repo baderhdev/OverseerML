@@ -7,8 +7,8 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-default-groups --no-cache
 
-# The artifact is built on the host by `uv run overseer-train` (see README).
-COPY models/v1 ./models/v1
+# Artifacts are built on the host (see README); the API serves models/production.json.
+COPY models ./models
 
 ENV PATH=/app/.venv/bin:$PATH
 EXPOSE 8000

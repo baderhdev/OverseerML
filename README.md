@@ -17,7 +17,7 @@ fixed commit and calls its code instead of copying it.
 | 1 | Serving: FastAPI, input validation, SHAP factors, request log, Docker | done |
 | 2 | Experiment tracking with MLflow | done |
 | 3 | Drift detection on a time-ordered replay of the test period | done |
-| 4 | Champion/challenger retraining | planned |
+| 4 | Champion/challenger retraining | done |
 | 5 | Streamlit dashboard | planned |
 
 ## Quick start
@@ -27,9 +27,11 @@ Requires Python 3.12, [uv](https://docs.astral.sh/uv/), and Docker.
 ```bash
 uv sync
 uv run overseer-train          # downloads Elliptic (~150 MB), writes models/v1/, logs to MLflow
+uv run overseer-drift          # Phase 3: drift replay, writes reports/drift/
+uv run overseer-retrain        # Phase 4: champion/challenger replay, moves models/production.json
 uv run mlflow ui               # browse runs at http://localhost:5000
-docker build -t overseerml:v1 .
-docker run -p 8000:8000 overseerml:v1
+docker build -t overseerml .
+docker run -p 8000:8000 overseerml
 ```
 
 Interactive API docs are at http://localhost:8000/docs.
@@ -152,6 +154,63 @@ alert is the retraining trigger for Phase 4.
 
 **Caveat:** the 0.80 floor was chosen after seeing these results. The drift
 cutoffs were not, because they come from the validation steps.
+
+## Phase 4: champion/challenger retraining
+
+`uv run overseer-retrain` replays steps 30-49 again, this time letting the
+system react. Each step is scored by whichever model is in production then.
+When the Phase 3 performance alert fires (lagged PR-AUC below 0.80), a
+challenger is trained on everything known at that point. Labels lag by 2
+steps, so at step *t* the data runs only to *t*−2:
+
+| Window | Steps | Used for |
+|---|---|---|
+| Train | 1 to *t*−6 | fitting (same SMOTE + XGBoost recipe as CryptoGuard) |
+| Threshold | *t*−5 to *t*−4 | picking the cost-based alert threshold |
+| Compare | *t*−3 to *t*−2 | scoring champion and challenger on data neither trained on |
+
+The challenger is promoted only if its PR-AUC on the comparison steps beats the
+champion's by at least 0.02. Every attempt is an MLflow run tagged with
+`role=challenger`, the trigger step, the champion, the decision, and the
+reason. Each attempt is also a line in
+[`reports/retraining/audit.jsonl`](reports/retraining/audit.jsonl). A
+promotion updates `models/production.json`, which is what the API and Docker
+image serve.
+
+### Result
+
+| Trigger step | Champion | Compared on (illicit) | Champion PR-AUC | Challenger PR-AUC | Decision |
+|---:|---|---|---:|---:|---|
+| 46 | v1 | 43-44 (48) | 0.042 | 0.176 | **promoted** retrain-s46 |
+| 47 | retrain-s46 | 44-45 (29) | 0.106 | 0.066 | rejected |
+| 48 | retrain-s46 | 45-46 (7) | 0.094 | 0.078 | rejected |
+| 49 | retrain-s46 | 46-47 (24) | 0.243 | 0.323 | **promoted** retrain-s49 |
+
+Did promotion help? The comparison sets are tiny, so a better check is how
+each model does on the later steps, which no decision saw (PR-AUC in
+hindsight):
+
+| Step | v1 (original) | retrain-s46 | retrain-s49 |
+|---:|---:|---:|---:|
+| 47 | 0.07 | 0.33 | 0.37 |
+| 48 | 0.31 | 0.65 | 0.68 |
+| 49 | 0.27 | 0.63 | 0.78 |
+
+Retraining on data that includes the first post-shutdown steps recovers much
+of the lost performance, and the gate promoted the right models.
+
+**Limits**
+
+- The decisions are made on very few illicit cases (7 to 48), so a 0.02
+  margin is small compared with the noise. With so little data, a
+  bootstrap test isn't possible.
+- The promoted models pass a *relative* gate but are still weak in absolute
+  terms at decision time (0.18 and 0.32 PR-AUC). There is no absolute
+  quality bar for promotion.
+- The lagged monitor keeps alerting after a promotion, because its window
+  still holds steps scored by the old model. There is no cooldown, so every
+  alert triggers an attempt.
+- Rerunning the replay resets production to v1 and rewrites the audit log.
 
 ## Development
 

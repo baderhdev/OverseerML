@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 overseer-train = "overseerml.train:main"
 overseer-drift = "overseerml.drift:main"
+overseer-retrain = "overseerml.retrain:main"
 
 [dependency-groups]
 train = [

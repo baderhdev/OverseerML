@@ -1,7 +1,8 @@
 """FastAPI service: score one transaction and explain the score.
 
-Run with `uvicorn overseerml.api:create_app --factory`. The model folder and
-request log come from OVERSEER_MODEL_DIR and OVERSEER_LOG_DB.
+Run with `uvicorn overseerml.api:create_app --factory`. It serves the model
+named in models/production.json unless OVERSEER_MODEL_DIR is set; the request
+log goes to OVERSEER_LOG_DB.
 """
 
 from __future__ import annotations
@@ -56,7 +57,12 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS requests (
 
 
 def create_app(model_dir: Path | None = None, log_db: Path | None = None) -> FastAPI:
-    model_dir = Path(model_dir or os.environ.get("OVERSEER_MODEL_DIR", "models/v1"))
+    if not (model_dir := model_dir or os.environ.get("OVERSEER_MODEL_DIR")):
+        # Default: whatever the champion/challenger gate last promoted.
+        model_dir = (
+            Path("models") / json.loads(Path("models/production.json").read_text())["version"]
+        )
+    model_dir = Path(model_dir)
     log_db = Path(log_db or os.environ.get("OVERSEER_LOG_DB", "logs/requests.db"))
 
     meta = json.loads((model_dir / "meta.json").read_text())

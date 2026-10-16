@@ -9,6 +9,10 @@ temporal split, model definition, threshold rule) and writes:
 Each run is logged to MLflow (local SQLite store `mlflow.db`, view with
 `uv run mlflow ui`): hyperparameters, PR-AUC, the test confusion matrix at the
 alert threshold, and both files above.
+
+The first model trained also becomes production (models/production.json, which
+the API serves); after that only the champion/challenger gate in retrain.py
+changes it.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from importlib.metadata import distribution
 from pathlib import Path
 
 import mlflow
+import pandas as pd
 from cryptoguard import evaluate as ev
 from cryptoguard.data import FEATURE_COLUMNS, load_elliptic
 from cryptoguard.features import TRAIN_END, VAL_END, temporal_split
@@ -28,6 +33,12 @@ from cryptoguard.pipeline import COST_FN, COST_FP
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data" / "raw"
+MODELS = ROOT / "models"
+PRODUCTION = MODELS / "production.json"
+
+
+def set_production(version: str) -> None:
+    PRODUCTION.write_text(json.dumps({"version": version}) + "\n", newline="\n")
 
 
 def cryptoguard_commit() -> str:
@@ -41,17 +52,28 @@ def main() -> None:
     parser.add_argument("--version", default="v1", help="artifact version name")
     parser.add_argument("--out", type=Path, help="output folder (default: models/<version>)")
     args = parser.parse_args()
-    out = args.out or ROOT / "models" / args.version
+    out = args.out or MODELS / args.version
 
     mlflow.set_experiment("overseerml")
     with mlflow.start_run(run_name=args.version) as run:
-        meta = train_and_save(args.version, out, run.info.run_id)
+        meta = train_and_save(args.version, out, run.info.run_id, load_elliptic(DATA_DIR))
+    if not PRODUCTION.exists():
+        set_production(args.version)
     print(json.dumps(meta["metrics"], indent=2))
     print(f"Wrote {out} (MLflow run {run.info.run_id})")
 
 
-def train_and_save(version: str, out: Path, run_id: str) -> dict:
-    train, val, test = temporal_split(load_elliptic(DATA_DIR))
+def train_and_save(
+    version: str,
+    out: Path,
+    run_id: str,
+    df: pd.DataFrame,
+    train_end: int = TRAIN_END,
+    val_end: int = VAL_END,
+) -> dict:
+    """Train on steps <= train_end, pick the threshold on steps up to val_end, and
+    report "test" metrics on every later step in `df`."""
+    train, val, test = temporal_split(df, train_end, val_end)
     # CryptoGuard compared SMOTE with class weights on validation and adopted
     # SMOTE (results.json "smote.adopted"), so that is the model rebuilt here.
     pipeline = build_xgboost_smote().fit(train.X, train.y)
@@ -65,6 +87,8 @@ def train_and_save(version: str, out: Path, run_id: str) -> dict:
     # threshold_metrics leaves out true negatives; add them to complete the confusion matrix.
     at_threshold["tn"] = len(test.y) - at_threshold["tp"] - at_threshold["fp"] - at_threshold["fn"]
 
+    test_end = int(test.time_step.max())
+
     out.mkdir(parents=True, exist_ok=True)
     booster.save_model(out / "model.json")
     meta = {
@@ -74,6 +98,7 @@ def train_and_save(version: str, out: Path, run_id: str) -> dict:
         "cryptoguard_commit": cryptoguard_commit(),
         "features": FEATURE_COLUMNS,
         "threshold": threshold,
+        "windows": {"train_end": train_end, "val_end": val_end, "test_end": test_end},
         "metrics": {
             "val_pr_auc": ev.pr_auc(val.y, val_s),
             "test_pr_auc": ev.pr_auc(test.y, test_s),
@@ -86,8 +111,9 @@ def train_and_save(version: str, out: Path, run_id: str) -> dict:
         {
             "cryptoguard_commit": meta["cryptoguard_commit"],
             "resampling": "SMOTE",
-            "train_end_step": TRAIN_END,
-            "val_end_step": VAL_END,
+            "train_end_step": train_end,
+            "val_end_step": val_end,
+            "test_end_step": test_end,
             "cost_fn": COST_FN,
             "cost_fp": COST_FP,
             **{k: v for k, v in booster.get_params().items() if v is not None},
