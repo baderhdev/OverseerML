@@ -18,7 +18,7 @@ fixed commit and calls its code instead of copying it.
 | 2 | Experiment tracking with MLflow | done |
 | 3 | Drift detection on a time-ordered replay of the test period | done |
 | 4 | Champion/challenger retraining | done |
-| 5 | Streamlit dashboard | planned |
+| 5 | Streamlit dashboard | done |
 
 ## Quick start
 
@@ -30,6 +30,7 @@ uv run overseer-train          # downloads Elliptic (~150 MB), writes models/v1/
 uv run overseer-drift          # Phase 3: drift replay, writes reports/drift/
 uv run overseer-retrain        # Phase 4: champion/challenger replay, moves models/production.json
 uv run mlflow ui               # browse runs at http://localhost:5000
+uv run streamlit run src/overseerml/dashboard.py   # Phase 5: dashboard at http://localhost:8501
 docker build -t overseerml .
 docker run -p 8000:8000 overseerml
 ```
@@ -211,6 +212,31 @@ of the lost performance, and the gate promoted the right models.
   still holds steps scored by the old model. There is no cooldown, so every
   alert triggers an attempt.
 - Rerunning the replay resets production to v1 and rewrites the audit log.
+
+## Phase 5: dashboard
+
+```bash
+uv run streamlit run src/overseerml/dashboard.py
+```
+
+The dashboard reads only the committed files in `reports/`, so it works on a
+fresh clone without the dataset, the API, or the MLflow store. It shows:
+
+- **Prediction volume**: transactions per replayed step, colored by the model
+  serving it, with the alerts raised. After the first promotion, alerts per
+  step more than double (from about 800 to 1,500-2,300). The retrained model
+  catches more, but its cost-based threshold also sends analysts far more
+  transactions to review.
+- **Model performance**: lagged PR-AUC (what monitoring saw), hindsight
+  PR-AUC of the serving model, and what v1 would have scored without
+  retraining, with the 0.80 alert floor and the steps where alerts fired.
+- **Score distribution drift**: the share of each step's transactions in each
+  risk-score band, as scored by the serving model.
+- **Feature drift**: how many features exceed PSI 0.25 per step, the two
+  flagged steps, and a heatmap of the 20 most drifted features.
+- **Promotion history**: every retraining attempt with its decision and reason.
+
+Every chart has a hover tooltip and a "Data" table underneath.
 
 ## Development
 

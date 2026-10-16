@@ -31,7 +31,7 @@ from cryptoguard.data import FEATURE_COLUMNS, load_elliptic
 from cryptoguard.features import TRAIN_END
 from xgboost import XGBClassifier
 
-from overseerml.drift import LABEL_LAG, PERF_FLOOR, ROLLING_STEPS
+from overseerml.drift import LABEL_LAG, PERF_FLOOR, ROLLING_STEPS, SCORE_EDGES, bin_shares
 from overseerml.train import DATA_DIR, MODELS, ROOT, set_production, train_and_save
 
 MARGIN = 0.02
@@ -45,6 +45,11 @@ def load(version: str) -> XGBClassifier:
     model = XGBClassifier()
     model.load_model(MODELS / version / "model.json")
     return model
+
+
+@cache
+def threshold(version: str) -> float:
+    return json.loads((MODELS / version / "meta.json").read_text())["threshold"]
 
 
 def score(version: str, rows: pd.DataFrame) -> np.ndarray:
@@ -115,11 +120,13 @@ def main() -> None:
     set_production(champion)
     mlflow.set_experiment("overseerml")
 
-    timeline, audit = [], []
+    timeline, audit, score_hist = [], [], {}
     for step in range(TRAIN_END + 1, int(df["time_step"].max()) + 1):
         batch = replay["time_step"] == step
         replay.loc[batch, "score"] = score(champion, replay[batch])
         replay.loc[batch, "served_by"] = champion
+        served = replay[batch]
+        score_hist[step] = bin_shares(served["score"], SCORE_EDGES)
 
         # Scores logged at the time, by whichever model was serving then.
         arrived = replay[
@@ -132,7 +139,10 @@ def main() -> None:
                 "time_step": step,
                 "champion": champion,
                 "transactions": int(batch.sum()),
+                "alerts": int((served["score"] >= threshold(champion)).sum()),
                 "pr_auc_lagged": round(lagged, 4),
+                # Known only in hindsight, once this step's labels arrive.
+                "pr_auc_hindsight": round(pr_auc(served, served["score"].to_numpy()), 4),
                 "perf_alert": alert,
             }
         )
@@ -146,6 +156,10 @@ def main() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(timeline).to_csv(OUT / "timeline.csv", index=False, lineterminator="\n")
+    bins = [f"{lo:.2f}-{lo + 0.05:.2f}" for lo in np.r_[0, SCORE_EDGES]]
+    pd.DataFrame(score_hist, index=bins).T.rename_axis("time_step").round(4).to_csv(
+        OUT / "score_hist.csv", lineterminator="\n"
+    )
     lines = [json.dumps(r) + "\n" for r in audit]
     (OUT / "audit.jsonl").write_text("".join(lines), newline="\n")
     print(pd.DataFrame(timeline).to_string(index=False))

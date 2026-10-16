@@ -29,9 +29,12 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
+dashboard = [
+    "streamlit>=1.50",
+]
 
 [tool.uv]
-default-groups = ["train", "dev"]
+default-groups = ["train", "dashboard", "dev"]
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
