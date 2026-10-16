@@ -1,0 +1,45 @@
+[project]
+name = "overseerml"
+version = "0.1.0"
+description = "Serving, tracking, drift monitoring and retraining for the CryptoGuard fraud model"
+readme = "README.md"
+requires-python = ">=3.11"
+# Serving needs only these; training deps live in the "train" group so the
+# Docker image stays free of CryptoGuard, SHAP and matplotlib.
+dependencies = [
+    "fastapi>=0.120",
+    "numpy>=2.0",
+    "uvicorn>=0.38",
+    "xgboost>=3.2.0",
+]
+
+[project.scripts]
+overseer-train = "overseerml.train:main"
+
+[dependency-groups]
+train = [
+    # Pinned to the commit whose results.json reports test PR-AUC 0.807.
+    "cryptoguard @ git+https://github.com/baderhdev/cryptoguard@1b0df9f1232d6eca9194b15c37c2ee85c14f137a",
+]
+dev = [
+    "httpx>=0.28",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[tool.uv]
+default-groups = ["train", "dev"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "NPY", "PD"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

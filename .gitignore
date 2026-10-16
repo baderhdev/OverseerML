@@ -1,0 +1,11 @@
+# Elliptic is CC BY-NC-ND 4.0, which forbids redistributing it.
+data/
+# Trained artifacts and request logs are produced locally (see README).
+models/
+logs/
+
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
