@@ -268,7 +268,10 @@ uv run pytest      # API tests use a tiny synthetic model, no dataset needed
 uv run ruff check .
 ```
 
-## Data license
+## License
 
-Elliptic is CC BY-NC-ND 4.0, which forbids redistribution, so `data/` is never
-committed. The loader downloads it and verifies it against pinned checksums.
+The code is released under the [MIT License](LICENSE).
+
+The Elliptic dataset is not covered by that license. It is CC BY-NC-ND 4.0,
+which forbids redistribution, so `data/` is never committed. The loader
+downloads it and verifies it against pinned checksums.
