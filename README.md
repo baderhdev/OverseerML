@@ -19,6 +19,7 @@ fixed commit and calls its code instead of copying it.
 | 3 | Drift detection on a time-ordered replay of the test period | done |
 | 4 | Champion/challenger retraining | done |
 | 5 | Streamlit dashboard | done |
+| 6 | CI: lint, API tests, retrain with a PR-AUC floor | done |
 
 ## Quick start
 
@@ -43,7 +44,8 @@ Interactive API docs are at http://localhost:8000/docs.
 saves them. `overseer-train` reruns CryptoGuard's own code and saves the model
 in XGBoost's native JSON format, plus a `meta.json` holding the version, feature
 list, alert threshold, test metrics, and the CryptoGuard commit it came from.
-The retrained model reproduces CryptoGuard's reported results exactly:
+The retrained model reproduces CryptoGuard's reported results exactly on the
+same platform (see Phase 6 for the small difference on Linux):
 
 | | CryptoGuard | `models/v1` |
 |---|---:|---:|
@@ -237,6 +239,27 @@ fresh clone without the dataset, the API, or the MLflow store. It shows:
 - **Promotion history**: every retraining attempt with its decision and reason.
 
 Every chart has a hover tooltip and a "Data" table underneath.
+
+## Phase 6: continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
+pull request:
+
+- **Lint and unit tests**: ruff, then pytest. The API tests use a tiny
+  synthetic model, so they need no data. They check that scores stay in
+  [0, 1], that the top SHAP factor is the real signal, and that missing,
+  unknown, non-numeric, and NaN inputs are rejected with a 422.
+- **Retrain and check the PR-AUC floor**: downloads Elliptic from its public
+  mirror (cached between runs, keyed by the pinned checksums), retrains the
+  model from scratch, and fails if test PR-AUC drops below 0.80. A change to
+  the data handling, the CryptoGuard pin, or a dependency that degrades the
+  model fails the build.
+
+Training is deterministic on one platform but not identical across platforms.
+The Windows build reproduces CryptoGuard exactly (PR-AUC 0.807, 1,436 alerts).
+A Linux run of the same workflow commands, with the same locked dependencies,
+gives PR-AUC 0.809 and a different cost-based threshold (1,602 alerts), from
+floating-point differences in XGBoost and SMOTE. The 0.80 floor clears both.
 
 ## Development
 

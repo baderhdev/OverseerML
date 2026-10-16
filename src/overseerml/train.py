@@ -38,6 +38,7 @@ PRODUCTION = MODELS / "production.json"
 
 
 def set_production(version: str) -> None:
+    PRODUCTION.parent.mkdir(parents=True, exist_ok=True)
     PRODUCTION.write_text(json.dumps({"version": version}) + "\n", newline="\n")
 
 

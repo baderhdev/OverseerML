@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.19"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # API tests use a tiny synthetic model: scores stay in [0, 1], bad input gets a 422.
+      - run: uv run pytest -q
+
+  metrics:
+    name: Retrain and check PR-AUC floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.19"
+          enable-cache: true
+      # Elliptic (~150 MB) is downloaded from its public mirror, never committed.
+      # The key holds the pinned SHA-256 prefixes, so a cached copy is only reused
+      # for the exact files CryptoGuard verifies.
+      - uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: elliptic-d33d62159e64-4ca957f0ceff
+      - run: uv sync --locked
+      - run: uv run overseer-train --version ci
+      - name: Fail if test PR-AUC is below 0.80
+        run: >-
+          uv run python -c "import json, sys;
+          m = json.load(open('models/ci/meta.json'))['metrics'];
+          print(json.dumps(m, indent=2));
+          sys.exit(0 if m['test_pr_auc'] >= 0.80 else
+          f'test PR-AUC {m[\"test_pr_auc\"]:.4f} is below the 0.80 floor')"
