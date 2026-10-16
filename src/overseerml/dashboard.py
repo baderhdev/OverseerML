@@ -26,6 +26,19 @@ WARNING, CRITICAL = "#fab219", "#d03b3b"
 BLUE_RAMP = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
 
 
+AUDIT_COLUMNS = [
+    "trigger_step",
+    "champion",
+    "challenger",
+    "compare_steps",
+    "compare_illicit",
+    "champion_pr_auc",
+    "challenger_pr_auc",
+    "promoted",
+    "reason",
+]
+
+
 @st.cache_data
 def load() -> dict:
     audit_lines = (REPORTS / "retraining" / "audit.jsonl").read_text().splitlines()
@@ -35,7 +48,8 @@ def load() -> dict:
         "drift": pd.read_csv(REPORTS / "drift" / "batches.csv"),
         "feature_psi": pd.read_csv(REPORTS / "drift" / "feature_psi.csv", index_col=0),
         "drift_summary": json.loads((REPORTS / "drift" / "summary.json").read_text()),
-        "audit": pd.DataFrame([json.loads(line) for line in audit_lines]),
+        # Explicit columns so a replay with no retraining attempts still loads.
+        "audit": pd.DataFrame([json.loads(line) for line in audit_lines], columns=AUDIT_COLUMNS),
     }
 
 
@@ -266,21 +280,9 @@ st.write(
     "Every retraining attempt: the challenger is promoted only if it beats the serving model's "
     "PR-AUC by 0.02 on the two newest labeled steps, which neither model trained on."
 )
-history = audit.assign(decision=audit["promoted"].map({True: "✔ promoted", False: "✖ rejected"}))
+decisions = audit["promoted"].map({True: "✔ promoted", False: "✖ rejected"})
 st.dataframe(
-    history[
-        [
-            "trigger_step",
-            "champion",
-            "challenger",
-            "compare_steps",
-            "compare_illicit",
-            "champion_pr_auc",
-            "challenger_pr_auc",
-            "decision",
-            "reason",
-        ]
-    ],
+    audit.assign(promoted=decisions).rename(columns={"promoted": "decision"}),
     hide_index=True,
     width="stretch",
 )

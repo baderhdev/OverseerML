@@ -21,7 +21,8 @@ The performance alert (lagged PR-AUC below PERF_FLOOR) is what catches the
 shutdown, and it is the retraining trigger. PERF_FLOOR was chosen after seeing
 the test-period results, so it is not a blind choice.
 
-Writes reports/drift/{batches,feature_psi,score_hist}.csv and summary.json.
+Writes reports/drift/{batches,feature_psi}.csv and summary.json. retrain.py reuses
+the lagged-label window and PR-AUC rule below, so both replays alert the same way.
 """
 
 from __future__ import annotations
@@ -64,9 +65,16 @@ def decile_edges(x: np.ndarray) -> np.ndarray:
     return np.unique(np.quantile(x, np.linspace(0.1, 0.9, 9)))
 
 
-def pr_auc_or_nan(rows: pd.DataFrame) -> float:
-    y = rows["label"].dropna().astype(int)
-    return ev.pr_auc(y, rows.loc[y.index, "score"]) if y.nunique() == 2 else np.nan
+def pr_auc(rows: pd.DataFrame, scores: np.ndarray) -> float:
+    """PR-AUC on the labeled rows, or NaN when they do not contain both classes."""
+    labeled = rows["label"].notna().to_numpy()
+    y = rows["label"][labeled].astype(int)
+    return ev.pr_auc(y, scores[labeled]) if y.nunique() == 2 else np.nan
+
+
+def arrived(steps: pd.Series, step: int) -> pd.Series:
+    """Rows whose labels are known at `step`: the latest ROLLING_STEPS labeled steps."""
+    return steps.between(step - LABEL_LAG - ROLLING_STEPS + 1, step - LABEL_LAG)
 
 
 def main() -> None:
@@ -85,15 +93,12 @@ def main() -> None:
     edges = {f: decile_edges(ref[f].to_numpy()) for f in FEATURE_COLUMNS}
     after_train = df[df["time_step"] > TRAIN_END]
 
-    batches, feature_psi, score_hist = [], {}, {"train": bin_shares(ref["score"], SCORE_EDGES)}
+    batches, feature_psi = [], {}
     for step, batch in after_train.groupby("time_step"):
         fpsi = {f: psi(ref[f].to_numpy(), batch[f].to_numpy(), edges[f]) for f in FEATURE_COLUMNS}
         feature_psi[step] = fpsi
-        score_hist[step] = bin_shares(batch["score"], SCORE_EDGES)
         # Only post-training steps count: training steps would flatter the model.
-        arrived = after_train["time_step"].between(
-            step - LABEL_LAG - ROLLING_STEPS + 1, step - LABEL_LAG
-        )
+        labels_in = after_train[arrived(after_train["time_step"], step)]
         labeled = batch["label"].notna()
         batches.append(
             {
@@ -107,8 +112,8 @@ def main() -> None:
                 "score_psi": psi(ref["score"], batch["score"], SCORE_EDGES),
                 "features_drifted": sum(v > PSI_DRIFTED for v in fpsi.values()),
                 "max_feature_psi": max(fpsi.values()),
-                "pr_auc_hindsight": pr_auc_or_nan(batch),
-                "pr_auc_lagged": pr_auc_or_nan(after_train[arrived]),
+                "pr_auc_hindsight": pr_auc(batch, batch["score"].to_numpy()),
+                "pr_auc_lagged": pr_auc(labels_in, labels_in["score"].to_numpy()),
             }
         )
 
@@ -126,10 +131,6 @@ def main() -> None:
     table.round(4).to_csv(args.out / "batches.csv", lineterminator="\n")
     pd.DataFrame(feature_psi).T.rename_axis("time_step").round(4).to_csv(
         args.out / "feature_psi.csv", lineterminator="\n"
-    )
-    bins = [f"{lo:.2f}-{lo + 0.05:.2f}" for lo in np.r_[0, SCORE_EDGES]]
-    pd.DataFrame(score_hist, index=bins).T.rename_axis("time_step").round(4).to_csv(
-        args.out / "score_hist.csv", lineterminator="\n"
     )
     summary = {
         "model_version": meta["version"],

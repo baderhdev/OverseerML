@@ -15,7 +15,8 @@ the decision, and is written to reports/retraining/audit.jsonl. A promotion
 moves models/production.json, which is what the API serves.
 
 The replay starts from v1 as production, so rerunning it rewrites the audit
-log and the pointer from scratch.
+log and the pointer from scratch. Each decision is appended to the audit log
+before the pointer moves, so a run that stops partway leaves them in agreement.
 """
 
 from __future__ import annotations
@@ -26,12 +27,11 @@ from functools import cache
 import mlflow
 import numpy as np
 import pandas as pd
-from cryptoguard import evaluate as ev
 from cryptoguard.data import FEATURE_COLUMNS, load_elliptic
 from cryptoguard.features import TRAIN_END
 from xgboost import XGBClassifier
 
-from overseerml.drift import LABEL_LAG, PERF_FLOOR, ROLLING_STEPS, SCORE_EDGES, bin_shares
+from overseerml.drift import LABEL_LAG, PERF_FLOOR, SCORE_EDGES, arrived, bin_shares, pr_auc
 from overseerml.train import DATA_DIR, MODELS, ROOT, set_production, train_and_save
 
 MARGIN = 0.02
@@ -56,11 +56,12 @@ def score(version: str, rows: pd.DataFrame) -> np.ndarray:
     return load(version).predict_proba(rows[FEATURE_COLUMNS])[:, 1]
 
 
-def pr_auc(rows: pd.DataFrame, scores: np.ndarray) -> float:
-    """PR-AUC on the labeled rows, or NaN when they do not contain both classes."""
-    labeled = rows["label"].notna().to_numpy()
-    y = rows["label"][labeled].astype(int)
-    return ev.pr_auc(y, scores[labeled]) if y.nunique() == 2 else np.nan
+def windows(step: int) -> tuple[int, int, int]:
+    """Last training step, last threshold step, and first comparison step for an
+    attempt at `step`; comparison runs to the newest labeled step, step - LABEL_LAG."""
+    compare_from = step - LABEL_LAG - COMPARE_STEPS + 1
+    val_end = compare_from - 1
+    return val_end - THRESHOLD_STEPS, val_end, compare_from
 
 
 def decide(champion_pr_auc: float, challenger_pr_auc: float) -> tuple[bool, str]:
@@ -75,9 +76,7 @@ def decide(champion_pr_auc: float, challenger_pr_auc: float) -> tuple[bool, str]
 def attempt(df: pd.DataFrame, step: int, champion: str) -> dict:
     """Train a challenger with what is known at `step`, compare it, and log the decision."""
     known = df[df["time_step"] <= step - LABEL_LAG]
-    compare_from = step - LABEL_LAG - COMPARE_STEPS + 1
-    val_end = compare_from - 1
-    train_end = val_end - THRESHOLD_STEPS
+    train_end, val_end, compare_from = windows(step)
     version = f"retrain-s{step}"
 
     with mlflow.start_run(run_name=version) as run:
@@ -117,10 +116,13 @@ def main() -> None:
     df = load_elliptic(DATA_DIR)
     replay = df[df["time_step"] > TRAIN_END].copy()
     champion = "v1"
+    OUT.mkdir(parents=True, exist_ok=True)
+    audit_log = OUT / "audit.jsonl"
+    audit_log.write_text("")
     set_production(champion)
     mlflow.set_experiment("overseerml")
 
-    timeline, audit, score_hist = [], [], {}
+    timeline, score_hist = [], {}
     for step in range(TRAIN_END + 1, int(df["time_step"].max()) + 1):
         batch = replay["time_step"] == step
         replay.loc[batch, "score"] = score(champion, replay[batch])
@@ -129,10 +131,8 @@ def main() -> None:
         score_hist[step] = bin_shares(served["score"], SCORE_EDGES)
 
         # Scores logged at the time, by whichever model was serving then.
-        arrived = replay[
-            replay["time_step"].between(step - LABEL_LAG - ROLLING_STEPS + 1, step - LABEL_LAG)
-        ]
-        lagged = pr_auc(arrived, arrived["score"].to_numpy())
+        labels_in = replay[arrived(replay["time_step"], step)]
+        lagged = pr_auc(labels_in, labels_in["score"].to_numpy())
         alert = lagged < PERF_FLOOR
         timeline.append(
             {
@@ -148,20 +148,19 @@ def main() -> None:
         )
         if alert:
             record = attempt(df, step, champion)
-            audit.append(record)
             print(json.dumps(record))
+            # Written before the pointer moves, so the log always explains production.
+            with audit_log.open("a", newline="\n") as f:
+                f.write(json.dumps(record) + "\n")
             if record["promoted"]:
                 champion = record["challenger"]
                 set_production(champion)
 
-    OUT.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(timeline).to_csv(OUT / "timeline.csv", index=False, lineterminator="\n")
     bins = [f"{lo:.2f}-{lo + 0.05:.2f}" for lo in np.r_[0, SCORE_EDGES]]
     pd.DataFrame(score_hist, index=bins).T.rename_axis("time_step").round(4).to_csv(
         OUT / "score_hist.csv", lineterminator="\n"
     )
-    lines = [json.dumps(r) + "\n" for r in audit]
-    (OUT / "audit.jsonl").write_text("".join(lines), newline="\n")
     print(pd.DataFrame(timeline).to_string(index=False))
     print(f"Production model: {champion}. Wrote {OUT}")
 

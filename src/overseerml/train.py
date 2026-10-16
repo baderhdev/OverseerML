@@ -51,9 +51,8 @@ def cryptoguard_commit() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--version", default="v1", help="artifact version name")
-    parser.add_argument("--out", type=Path, help="output folder (default: models/<version>)")
     args = parser.parse_args()
-    out = args.out or MODELS / args.version
+    out = MODELS / args.version
 
     mlflow.set_experiment("overseerml")
     with mlflow.start_run(run_name=args.version) as run:
