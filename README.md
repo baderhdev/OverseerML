@@ -16,7 +16,7 @@ fixed commit and calls its code instead of copying it.
 |---|---|---|
 | 1 | Serving: FastAPI, input validation, SHAP factors, request log, Docker | done |
 | 2 | Experiment tracking with MLflow | done |
-| 3 | Drift detection on a time-ordered replay of the test period | planned |
+| 3 | Drift detection on a time-ordered replay of the test period | done |
 | 4 | Champion/challenger retraining | planned |
 | 5 | Streamlit dashboard | planned |
 
@@ -98,6 +98,60 @@ is needed. Each run records:
 
 `meta.json` also stores the run ID, so any served model version can be traced
 back to the exact run that produced it.
+
+## Phase 3: drift detection
+
+`uv run overseer-drift` replays time steps 30-49 as if each two-week step were
+a batch of new transactions arriving, scores them with the served model, and
+writes per-batch results to [`reports/drift/`](reports/drift/). Each batch gets
+three signals:
+
+- **Feature drift**: PSI of each of the 165 features against the training
+  period (steps 1-29). A feature counts as drifted above PSI 0.25.
+- **Score drift**: PSI of the model's risk scores against the training period.
+- **Lagged performance**: PR-AUC as monitoring would actually see it. Labels
+  arrive 2 steps (about 4 weeks) late, so at step *t* the metric pools the
+  latest 3 steps whose labels have arrived.
+
+The drift cutoffs come from the validation steps (30-34), where the model
+still works (PR-AUC 0.95-1.00). A batch is flagged only if it drifts more than
+any validation batch did. The performance alert fires when lagged PR-AUC
+falls below 0.80.
+
+### Result: input drift misses the dark-market shutdown
+
+| Step | Illicit | Hindsight PR-AUC | Lagged PR-AUC | Features drifted | Drift flag | Performance alert |
+|---|---:|---:|---:|---:|:-:|:-:|
+| 37 | 40 | 0.89 | 0.99 | 59 | yes | |
+| 42 | 239 | 0.90 | 0.89 | 32 | | |
+| **43** (shutdown) | 24 | **0.06** | 0.90 | 32 | | |
+| 44 | 24 | 0.04 | 0.89 | 33 | | |
+| 45 | 5 | 0.01 | 0.87 | 36 | | |
+| 46 | 2 | 0.26 | 0.75 | 58 | yes | **yes** |
+| 47 | 22 | 0.07 | 0.03 | 35 | | **yes** |
+| 48-49 | 36, 56 | 0.27-0.31 | 0.03-0.04 | 43 | | **yes** |
+
+The model's hindsight PR-AUC collapses at step 43, but no input-drift signal
+reacts. There are two reasons:
+
+1. **Elliptic's features drift all the time.** About 32 of 165 features
+   exceed PSI 0.25 in nearly every batch, including validation batches where
+   PR-AUC is 0.99. Six neighbor-aggregate features sit near PSI 8 throughout.
+   "Many features drifted" is the normal state of this data, so it can't
+   signal a failure.
+2. **The shutdown is concept drift, not input drift.** Illicit volume fell
+   from 239 to 24 transactions, in batches of about 5,000. What changed is
+   which transactions are illicit, not what transactions look like, so feature
+   and score distributions barely move.
+
+Only the label-based performance alert catches it, at step 46, three steps
+after the shutdown. Labels lag by 2 steps, so step 45 is the earliest any
+label-based alert could fire. The two drift flags (37 and 46) don't line up
+with the failure, so they are reported for information only. The performance
+alert is the retraining trigger for Phase 4.
+
+**Caveat:** the 0.80 floor was chosen after seeing these results. The drift
+cutoffs were not, because they come from the validation steps.
 
 ## Development
 
