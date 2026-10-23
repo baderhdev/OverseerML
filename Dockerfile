@@ -3,7 +3,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /bin/uv
 WORKDIR /app
 
 # Serving dependencies only: the train/dev groups (CryptoGuard, SHAP, pytest) stay out.
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN uv sync --frozen --no-default-groups --no-cache
 
