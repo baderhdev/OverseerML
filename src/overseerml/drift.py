@@ -128,15 +128,15 @@ def main() -> None:
     table["perf_alert"] = table["pr_auc_lagged"] < PERF_FLOOR
 
     args.out.mkdir(parents=True, exist_ok=True)
-    table.round(4).to_csv(args.out / "batches.csv", lineterminator="\n")
-    pd.DataFrame(feature_psi).T.rename_axis("time_step").round(4).to_csv(
+    table.to_csv(args.out / "batches.csv", lineterminator="\n")
+    pd.DataFrame(feature_psi).T.rename_axis("time_step").to_csv(
         args.out / "feature_psi.csv", lineterminator="\n"
     )
     summary = {
         "model_version": meta["version"],
         "psi_drifted": PSI_DRIFTED,
         "feature_flag_above": feature_limit,
-        "score_psi_flag_above": round(score_limit, 4),
+        "score_psi_flag_above": score_limit,
         "perf_floor": PERF_FLOOR,
         "label_lag_steps": LABEL_LAG,
         "rolling_steps": ROLLING_STEPS,

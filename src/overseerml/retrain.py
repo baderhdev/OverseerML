@@ -105,8 +105,8 @@ def attempt(df: pd.DataFrame, step: int, champion: str) -> dict:
         "threshold_steps": f"{train_end + 1}-{val_end}",
         "compare_steps": f"{compare_from}-{step - LABEL_LAG}",
         "compare_illicit": int((compare["label"] == 1).sum()),
-        "champion_pr_auc": round(champion_pr_auc, 4),
-        "challenger_pr_auc": round(challenger_pr_auc, 4),
+        "champion_pr_auc": champion_pr_auc,
+        "challenger_pr_auc": challenger_pr_auc,
         "promoted": promoted,
         "reason": reason,
     }
@@ -140,9 +140,9 @@ def main() -> None:
                 "champion": champion,
                 "transactions": int(batch.sum()),
                 "alerts": int((served["score"] >= threshold(champion)).sum()),
-                "pr_auc_lagged": round(lagged, 4),
+                "pr_auc_lagged": lagged,
                 # Known only in hindsight, once this step's labels arrive.
-                "pr_auc_hindsight": round(pr_auc(served, served["score"].to_numpy()), 4),
+                "pr_auc_hindsight": pr_auc(served, served["score"].to_numpy()),
                 "perf_alert": alert,
             }
         )
@@ -158,7 +158,7 @@ def main() -> None:
 
     pd.DataFrame(timeline).to_csv(OUT / "timeline.csv", index=False, lineterminator="\n")
     bins = [f"{lo:.2f}-{lo + 0.05:.2f}" for lo in np.r_[0, SCORE_EDGES]]
-    pd.DataFrame(score_hist, index=bins).T.rename_axis("time_step").round(4).to_csv(
+    pd.DataFrame(score_hist, index=bins).T.rename_axis("time_step").to_csv(
         OUT / "score_hist.csv", lineterminator="\n"
     )
     print(pd.DataFrame(timeline).to_string(index=False))
