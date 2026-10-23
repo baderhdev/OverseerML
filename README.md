@@ -38,6 +38,9 @@ docker run -p 8000:8000 overseerml
 
 Interactive API docs are at http://localhost:8000/docs.
 
+`make reproduce` runs the whole pipeline end to end, including a load test of
+the API, and writes the unrounded numbers to [RESULTS.md](RESULTS.md).
+
 ## Phase 1: serving
 
 **Training artifact.** CryptoGuard trains and evaluates its models but never

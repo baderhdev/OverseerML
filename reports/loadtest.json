@@ -1,0 +1,35 @@
+{
+  "model_version": "retrain-s49",
+  "requests": 2000,
+  "warmup_requests": 50,
+  "concurrency": 8,
+  "server_logged_requests": 2000,
+  "wall_seconds": 33.120974899997236,
+  "throughput_rps": 60.38469598309339,
+  "client_latency_ms": {
+    "p50": 72.7352000103565,
+    "p95": 438.09391499671545,
+    "p99": 1162.0314840052743,
+    "mean": 131.85495140019339,
+    "max": 3411.214199993992
+  },
+  "server_latency_ms": {
+    "p50": 4.1048064999813505,
+    "p95": 5.1280096999732905,
+    "p99": 6.123269000015625,
+    "mean": 4.217490097000053,
+    "max": 8.166938000044865
+  },
+  "host": {
+    "os": "Windows-10-10.0.19045-SP0",
+    "logical_cpus": 20,
+    "cpu": "Intel(R) Core(TM) i9-10900K CPU @ 3.70GHz",
+    "ram_bytes": 68616658944,
+    "docker": {
+      "ServerVersion": "29.8.2",
+      "OperatingSystem": "Docker Desktop",
+      "NCPU": 20,
+      "MemTotal": 33602535424
+    }
+  }
+}

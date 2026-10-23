@@ -2,7 +2,7 @@
   "model_version": "v1",
   "psi_drifted": 0.25,
   "feature_flag_above": 51,
-  "score_psi_flag_above": 0.4834,
+  "score_psi_flag_above": 0.4833592487041479,
   "perf_floor": 0.8,
   "label_lag_steps": 2,
   "rolling_steps": 3,
