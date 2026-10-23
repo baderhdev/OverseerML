@@ -113,14 +113,14 @@ def main() -> None:
         md += [
             f"**Input-drift detector (PSI): first flag at step {first_flag}**, "
             f"{SHUTDOWN_STEP - first_flag} steps *before* the shutdown, while v1's hindsight "
-            f"PR-AUC that step was {row['pr_auc_hindsight']!r}. Elliptic has no dates, only "
+            f"PR-AUC that step was {float(row['pr_auc_hindsight'])!r}. Elliptic has no dates, only "
             "two-week time steps.",
             "",
             f"A step is flagged when more than {drift_summary['feature_flag_above']} features "
             f"have PSI > {PSI_DRIFTED} against training steps 1-29, or its score PSI exceeds "
             f"{drift_summary['score_psi_flag_above']!r} (both the highest seen in validation "
             f"steps 30-34). Step {first_flag} had {int(row['features_drifted'])} drifted "
-            f"features (score PSI {row['score_psi']!r}). All steps flagged: "
+            f"features (score PSI {float(row['score_psi'])!r}). All steps flagged: "
             f"{[int(s) for s in flagged]}. The detector did **not** flag the shutdown step "
             f"{SHUTDOWN_STEP}.",
             "",
@@ -129,7 +129,7 @@ def main() -> None:
             md += [
                 f"**Performance detector: first alert at step {first_alert}**, "
                 f"{first_alert - SHUTDOWN_STEP} steps after the shutdown, when lagged "
-                f"PR-AUC fell to {timeline.loc[first_alert, 'pr_auc_lagged']!r} (floor 0.8; "
+                f"PR-AUC fell to {float(timeline.loc[first_alert, 'pr_auc_lagged'])!r} (floor 0.8; "
                 "labels arrive 2 steps late). This alert is what triggered retraining.",
                 "",
             ]
